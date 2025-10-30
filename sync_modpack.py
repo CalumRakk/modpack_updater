@@ -1,3 +1,4 @@
+import argparse
 import json
 import mimetypes
 import shutil
@@ -8,6 +9,19 @@ import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Optional, Union
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Sincroniza el modpack de Minecraft con la última versión de Modrinth."
+    )
+    parser.add_argument(
+        "--minecraft", required=True, help="Ruta a la carpeta del perfil de Minecraft"
+    )
+    parser.add_argument(
+        "--api", required=True, help="URL de la API de Modrinth para el modpack"
+    )
+    return parser.parse_args()
 
 
 def get_or_install_requests():
@@ -53,11 +67,11 @@ def read_mrpack(path: Union[str, Path]):
 def has_last_modpack_version(last_version: str):
     """Comprueba si tiene la ultima version del 'archivo .mrpack' descargada"""
 
-    if not FOLDER_MODPACKS.exists():
+    if not MODPACKS_FOLDER.exists():
         return False
 
     # Comprobar si el archivo .mrpack corresponde a la última versión
-    for file in list(FOLDER_MODPACKS.glob("*.mrpack")):
+    for file in list(MODPACKS_FOLDER.glob("*.mrpack")):
         if last_version in file.name:
             return True
     return False
@@ -65,15 +79,15 @@ def has_last_modpack_version(last_version: str):
 
 def get_last_modpack_version() -> Optional[Path]:
     """Obtiene la ultima version del 'archivo .mrpack' descargada"""
-    if not FOLDER_MODPACKS.exists():
+    if not MODPACKS_FOLDER.exists():
         return None
 
-    mrpack_files = list(FOLDER_MODPACKS.glob("*.mrpack"))
+    mrpack_files = list(MODPACKS_FOLDER.glob("*.mrpack"))
     if not mrpack_files:
         return None
 
     latest_mrpack = max(mrpack_files, key=lambda f: f.stat().st_mtime)
-    return FOLDER_MODPACKS / latest_mrpack
+    return MODPACKS_FOLDER / latest_mrpack
 
 
 def download_modpack(version_url: str, output_path: Path):
@@ -107,7 +121,7 @@ def sync_mods_folder(files_from_mrpack):
     - Elimina mods que ya no existen en el .mrpack
     - Devuelve lista de mods que deben descargarse
     """
-    folder_mods = FOLDER_MINECRAFT / "mods"
+    folder_mods = MINECRAFT_FOLDER / "mods"
     folder_mods.mkdir(exist_ok=True)
 
     # Mapear mods esperados (por nombre -> tamaño)
@@ -164,7 +178,7 @@ def download_mod(file: dict, base_folder: Path):
 
 
 def main():
-    modpack_versions = fetch_modpack_versions(URL_MODPACK)
+    modpack_versions = fetch_modpack_versions(MODPACK_API_URL)
     if not modpack_versions:
         return
 
@@ -188,7 +202,7 @@ def main():
         # --- Descargas concurrentes ---
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = [
-                executor.submit(download_mod, file, FOLDER_MINECRAFT)
+                executor.submit(download_mod, file, MINECRAFT_FOLDER)
                 for file in files_to_download
             ]
             for future in as_completed(futures):
@@ -197,7 +211,7 @@ def main():
         # --- Sobrescribir overrides ---
         print("\nAplicando overrides...")
         for file in data["overrides"]:
-            path = FOLDER_MINECRAFT / file["path"]
+            path = MINECRAFT_FOLDER / file["path"]
             path.parent.mkdir(parents=True, exist_ok=True)
             with open(path, "wb") as f:
                 content = file["content"]
@@ -207,22 +221,18 @@ def main():
             print(f"✔ {file['path']} (override aplicado)")
 
         print("\n✅ Modpack actualizado correctamente.")
-        FOLDER_MODPACKS.mkdir(parents=True, exist_ok=True)
-        shutil.move(mrpack_path, FOLDER_MODPACKS / last_version_filename)
+        MODPACKS_FOLDER.mkdir(parents=True, exist_ok=True)
+        shutil.move(mrpack_path, MODPACKS_FOLDER / last_version_filename)
 
     else:
         print("\n✅ Modpack ya ha sido actualizado.")
 
 
 if __name__ == "__main__":
-    mi_carpeta_de_minecraft = (
-        r"C:\Users\Leo\AppData\Roaming\ModrinthApp\profiles\La casita del Arbol 0.0.4"
-    )
-
-    # Variables para gestionar los modpacks
-    FOLDER_MINECRAFT = Path(mi_carpeta_de_minecraft)
-    URL_MODPACK = "https://api.modrinth.com/v2/project/la-casita-del-arbol/version"
-    FOLDER_MODPACKS = FOLDER_MINECRAFT / "modpacks"
+    args = parse_args()
+    MINECRAFT_FOLDER = Path(args.minecraft)
+    MODPACK_API_URL = args.api
+    MODPACKS_FOLDER = MINECRAFT_FOLDER / "modpacks"
     requests = get_or_install_requests()
 
     main()
