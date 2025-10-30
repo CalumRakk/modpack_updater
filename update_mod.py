@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 import zipfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Optional, Union
 
@@ -42,7 +43,6 @@ def read_mrpack(path: Union[str, Path]):
                 result["overrides"].append(
                     {
                         "path": name.removeprefix("overrides/"),
-                        "type": guess_type(name),
                         "content": z.read(name),
                     }
                 )
@@ -107,6 +107,26 @@ def remove_content_of_folder_mods():
             mod_file.unlink()
 
 
+def download_mod(file, base_folder):
+    """Descarga un solo mod."""
+    path = base_folder / file["path"]
+    url = file["downloads"][0]
+    filesize = file["fileSize"]
+
+    if path.exists() and path.stat().st_size == filesize:
+        return f"✔ {file['path']} (ya actualizado)"
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        response = requests.get(url, timeout=30)
+        response.raise_for_status()
+        with open(path, "wb") as f:
+            f.write(response.content)
+        return f"⬇️ {file['path']} (descargado)"
+    except Exception as e:
+        return f"⚠️ Error en {file['path']}: {e}"
+
+
 def main():
     modpack_versions = fetch_modpack_versions(URL_MODPACK)
     if not modpack_versions:
@@ -114,44 +134,43 @@ def main():
 
     last_version_filename = modpack_versions[0]["files"][0]["filename"]
     last_version_url = modpack_versions[0]["files"][0]["url"]
-    if not has_last_modpack_version(last_version_filename):
-        print(f"Descargando la versión {last_version_filename} del modpacks...")
 
-        # folder temporal
+    if not has_last_modpack_version(last_version_filename):
+        print(f"Descargando la versión {last_version_filename} del modpack...")
+
         folder_temp = tempfile.TemporaryDirectory()
         mrpack_path = Path(folder_temp.name) / last_version_filename
         download_modpack(last_version_url, mrpack_path)
 
-        print("Leyendo el contenido del modpacks descargado...")
+        print("Leyendo el contenido del modpack descargado...")
         data = read_mrpack(mrpack_path)
 
-        print("\nContenido de modrinth.index.json:")
+        print("\nDescargando mods en paralelo...\n")
+        remove_content_of_folder_mods()
 
-        # remove_content_of_folder_mods()
+        files = data["modrinth.index.json"]["files"]  # type: ignore
 
-        # for file in data["modrinth.index.json"]["files"]:  # type: ignore
-        #     path = FOLDER_MINECRAFT / file["path"]
-        #     filesize = file["fileSize"]
-        #     url = file["downloads"][0]
-        #     if not path.exists() or path.stat().st_size != filesize:
-        #         print(f"- {file['path']} (size: {filesize} bytes)")
-        #         response = requests.get(url)
-        #         path.parent.mkdir(parents=True, exist_ok=True)
-        #         with open(path, "wb") as f:
-        #             f.write(response.content)
+        # --- Descargas concurrentes ---
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = [
+                executor.submit(download_mod, file, FOLDER_MINECRAFT) for file in files
+            ]
+            for future in as_completed(futures):
+                print(future.result())
 
+        # --- Sobrescribir overrides ---
+        print("\nAplicando overrides...")
         for file in data["overrides"]:
             path = FOLDER_MINECRAFT / file["path"]
-            print(f"- {file['path']} (override)")
             path.parent.mkdir(parents=True, exist_ok=True)
             with open(path, "wb") as f:
-                try:
-                    f.write(file["content"].encode("utf-8"))
-                except Exception as e:
-                    f.write(file["content"])
-        print("\nModpack actualizado correctamente.")
+                content = file["content"]
+                if isinstance(content, str):
+                    content = content.encode("utf-8", errors="ignore")
+                f.write(content)
+            print(f"⚙️ {file['path']} (override aplicado)")
 
-        # Mover el archivo .mrpack a la carpeta de modpacks
+        print("\n✅ Modpack actualizado correctamente.")
         FOLDER_MODPACKS.mkdir(parents=True, exist_ok=True)
         shutil.move(mrpack_path, FOLDER_MODPACKS / last_version_filename)
 
