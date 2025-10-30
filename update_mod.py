@@ -136,8 +136,8 @@ def sync_mods_folder(files_from_mrpack):
         print(f"🗑️ Eliminado mod sobrante: {name}")
 
     # --- Mostrar resumen ---
-    print(f"\n🧩 {len(to_download)} mods necesitan descargarse.")
-    print(f"♻️  {len(existing) - len(to_delete)} mods conservados.\n")
+    print(f"\n- {len(to_download)} mods necesitan descargarse.")
+    print(f"- {len(existing) - len(to_delete)} mods conservados.\n")
 
     # Devolver lista de archivos que hay que descargar
     return [f for f in files_from_mrpack if Path(f["path"]).name in to_download]
@@ -158,7 +158,7 @@ def download_mod(file: dict, base_folder: Path):
         response.raise_for_status()
         with open(path, "wb") as f:
             f.write(response.content)
-        return f"⬇️ {file['path']} (descargado)"
+        return f"✔ {file['path']} (descargado)"
     except Exception as e:
         return f"⚠️ Error en {file['path']}: {e}"
 
@@ -204,11 +204,14 @@ def main():
                 if isinstance(content, str):
                     content = content.encode("utf-8", errors="ignore")
                 f.write(content)
-            print(f"⚙️ {file['path']} (override aplicado)")
+            print(f"✔ {file['path']} (override aplicado)")
 
         print("\n✅ Modpack actualizado correctamente.")
         FOLDER_MODPACKS.mkdir(parents=True, exist_ok=True)
         shutil.move(mrpack_path, FOLDER_MODPACKS / last_version_filename)
+
+    else:
+        print("\n✅ Modpack ya ha sido actualizado.")
 
 
 if __name__ == "__main__":
