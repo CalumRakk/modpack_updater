@@ -100,14 +100,50 @@ def fetch_modpack_versions(url):
         return None
 
 
-def remove_content_of_folder_mods():
+def sync_mods_folder(files_from_mrpack):
+    """Sincroniza la carpeta /mods con los archivos del modpack.
+
+    - Conserva mods idénticos (mismo nombre y tamaño)
+    - Elimina mods que ya no existen en el .mrpack
+    - Devuelve lista de mods que deben descargarse
+    """
     folder_mods = FOLDER_MINECRAFT / "mods"
-    if folder_mods.exists():
-        for mod_file in folder_mods.glob("*"):
-            mod_file.unlink()
+    folder_mods.mkdir(exist_ok=True)
+
+    # Mapear mods esperados (por nombre -> tamaño)
+    expected = {Path(f["path"]).name: f["fileSize"] for f in files_from_mrpack}
+
+    # Mods existentes en disco
+    existing = {f.name: f.stat().st_size for f in folder_mods.glob("*.jar")}
+
+    to_delete = []
+    to_download = []
+
+    # --- Detectar mods sobrantes ---
+    for name in existing:
+        if name not in expected:
+            to_delete.append(name)
+
+    # --- Detectar mods faltantes o distintos ---
+    for name, size in expected.items():
+        if name not in existing or existing[name] != size:
+            to_download.append(name)
+
+    # --- Eliminar mods sobrantes ---
+    for name in to_delete:
+        path = folder_mods / name
+        path.unlink(missing_ok=True)
+        print(f"🗑️ Eliminado mod sobrante: {name}")
+
+    # --- Mostrar resumen ---
+    print(f"\n🧩 {len(to_download)} mods necesitan descargarse.")
+    print(f"♻️  {len(existing) - len(to_delete)} mods conservados.\n")
+
+    # Devolver lista de archivos que hay que descargar
+    return [f for f in files_from_mrpack if Path(f["path"]).name in to_download]
 
 
-def download_mod(file, base_folder):
+def download_mod(file: dict, base_folder: Path):
     """Descarga un solo mod."""
     path = base_folder / file["path"]
     url = file["downloads"][0]
@@ -146,14 +182,14 @@ def main():
         data = read_mrpack(mrpack_path)
 
         print("\nDescargando mods en paralelo...\n")
-        remove_content_of_folder_mods()
-
-        files = data["modrinth.index.json"]["files"]  # type: ignore
+        files_from_pack = data["modrinth.index.json"]["files"]  # type: ignore
+        files_to_download = sync_mods_folder(files_from_pack)
 
         # --- Descargas concurrentes ---
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = [
-                executor.submit(download_mod, file, FOLDER_MINECRAFT) for file in files
+                executor.submit(download_mod, file, FOLDER_MINECRAFT)
+                for file in files_to_download
             ]
             for future in as_completed(futures):
                 print(future.result())
